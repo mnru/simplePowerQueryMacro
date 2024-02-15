@@ -1,0 +1,50 @@
+祝日qry	
+変数	式
+joinC	"(tblL,tblR,optional cols,optional colsNew)=>
+let cols=if cols=null then Table.ColumnNames(tblR) else cols,
+     ret= Table.ExpandTableColumn(Table.AddColumn(tblL,""tmpCol"",each tblR),""tmpCol"",cols,colsNew)
+in ret"
+joinL	"(tblL,tblR,keys,cols,optional colsNew,optional keysR)=>
+let keysR=if keysR=null then keys else keysR,
+ret= Table.ExpandTableColumn(Table.NestedJoin(tblL,keys,tblR,keysR,""tmpCol"",JoinKind.LeftOuter),""tmpCol"",cols,colsNew) in ret"
+addCols	"(tbl,cols)=>let ret=List.Accumulate(cols,tbl,
+    (tbl,colPrm)=>
+    let col=colPrm{0},fnc=colPrm{1},tp=if List.Count(colPrm)>=3 then colPrm{2} else null,
+    ret=Table.AddColumn(tbl,col,fnc,tp)
+    in ret  
+)
+in ret"
+cTbl	(tbl)=>let ret=Excel.CurrentWorkbook(){[Name=tbl]}[Content] in ret
+start	?
+years	?
+getDay	"(y,m,wr,wc)=>
+let wf=Date.DayOfWeek(#date(y,m,1),Day.Monday)+1,
+       f=if wc>=wf then wc-wf+1 else wc-wf+8,
+       ret=f+7*(wr-1)
+in ret"
+getSpring	(y)=>let ret= Number.RoundDown(20.8431 + 0.242194 * (y - 1980)) - Number.RoundDown((y - 1980) / 4) in ret
+getFall	(y)=>let ret= Number.RoundDown(23.2488 + 0.242194 * (y - 1980)) - Number.RoundDown((y - 1980) / 4) in ret
+年テーブル	"Table.FromList(List.Numbers(start,years),Splitter.SplitByNothing(),{""年""})"
+年テーブル_	"Table.TransformColumnTypes(年テーブル,{{""年"", Int64.Type}})"
+祝日固定	"cTbl(""祝日固定"")"
+祝日月曜	"cTbl(""祝日月曜"")"
+祝日固定年付加	"joinC(年テーブル_,祝日固定)"
+祝日月曜年付加	"joinC(年テーブル_,祝日月曜)"
+祝日月曜日付加	"Table.AddColumn(祝日月曜年付加,""日"", each getDay([年],[月],[週],1), Int64.Type)"
+祝日春分	"addCols(年テーブル_,{{""祝日"",each ""春分の日""},{""月"",each 3,Int64.Type},{""日"",each getSpring([年]),Int64.Type}})"
+祝日秋分	"addCols(年テーブル_,{{""祝日"",each ""秋分の日""},{""月"",each 9,Int64.Type},{""日"",each getFall([年]),Int64.Type}})"
+祝日月曜以外	"Table.Combine({祝日固定年付加,祝日春分,祝日秋分})"
+休日前5月以外	"Table.SelectRows(祝日月曜以外,each Date.DayOfWeekName(#date([年],[月],[日]))=""日曜日"" and [月]<>5)"
+休日5月以外	"Table.TransformColumns(休日前5月以外,{{""日"",each _+1},{""祝日"",each ""休日""}})"
+休日5月	"addCols(年テーブル_,{{""祝日"",each ""休日""},{""月"",each 5,Int64.Type},{""日"",each 6,Int64.Type},
+{""曜日"",each Date.DayOfWeekName(#date([年],[月],[日]))}})"
+休日5月選択	"Table.SelectRows(休日5月,each [曜日]=""月曜日"" or [曜日]=""火曜日"" or [曜日]=""水曜日"")"
+祝日休日	"Table.Combine({祝日月曜以外,祝日月曜日付加,休日5月以外,休日5月選択},{""祝日"",""年"",""月"",""日""})"
+祝日整列	"Table.Sort(祝日休日,{{""年"", Order.Ascending}, {""月"", Order.Ascending}, {""日"", Order.Ascending}})"
+日付リスト	"List.Dates(#date(start,1,1),Duration.Days(#date(start+years,1,1)-#date(start,1,1)),#duration(1,0,0,0))"
+日付テーブル	"Table.FromList(日付リスト,Splitter.SplitByNothing(),{""日付""})"
+日付テーブル_	"Table.TransformColumnTypes(日付テーブル,{{""日付"", type date}})"
+日付テーブル年月日追加	"addCols(日付テーブル_,{{""年"",each Date.Year([日付])},{""月"",each Date.Month([日付])},
+{""日"",each Date.Day([日付])},{""曜日"",each Date.DayOfWeekName([日付])}})"
+カレンダー	"joinL(日付テーブル年月日追加,祝日休日,{""年"",""月"",""日""},{""祝日""})"
+カレンダー整列	"Table.Sort(カレンダー,{{""日付"", Order.Ascending}})"
